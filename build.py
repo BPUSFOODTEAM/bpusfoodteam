@@ -2,28 +2,30 @@
 """
 BPUSFOODTEAM GitHub Pages builder.
 
-Run this any time you add/remove files in the /files folder:
-    python build.py
+HOW IT WORKS
+  Drop documents directly into the category folder, e.g.
+      ampm/bakery/1 grill- 1 facing Sept-Oct 2026.pdf
+  ...then this script rebuilds that category's index.html so the
+  document is listed and downloadable.
 
-It rebuilds every HTML page, the QR codes, and links.csv.
-Nothing else needs to be edited by hand except config.py (site URL) and
-the files you drop into files/<banner>/<category>/.
+  There is no separate "files" folder. The folder that holds the
+  page is the folder that holds the documents.
+
+Run:  python build.py
 """
 
 import csv
 import html
-import os
 import shutil
 from pathlib import Path
+from urllib.parse import quote
 
 ROOT = Path(__file__).parent
-FILES = ROOT / "files"
 QR = ROOT / "qr-codes"
 
 # ---------------------------------------------------------------- CONFIG ----
-# Change this to your live GitHub Pages URL, e.g.
-#   https://<org-or-username>.github.io/bpusfoodteam
-SITE_URL = "https://ORG-NAME.github.io/bpusfoodteam"
+# GitHub PAGES address (not the github.com repo address). No trailing slash.
+SITE_URL = "https://bpusfoodteam.github.io/bpusfoodteam"
 
 SITE_TITLE = "BPUSFOODTEAM"
 SITE_TAGLINE = "Food &amp; Dispensed resource hub"
@@ -52,7 +54,8 @@ ICONS = {
     "hot-food": "&#127829;",
 }
 
-SKIP = {".gitkeep", ".DS_Store", "Thumbs.db"}
+# Never listed as downloadable documents.
+SKIP = {"index.html", ".gitkeep", ".DS_Store", "Thumbs.db", ".nojekyll"}
 
 # ------------------------------------------------------------------ CSS -----
 CSS = """
@@ -133,16 +136,11 @@ def human(n):
 
 
 def scan(banner, cat):
-    d = FILES / banner / cat
+    """Documents sitting in the category folder alongside index.html."""
+    d = ROOT / banner / cat
     d.mkdir(parents=True, exist_ok=True)
-    gk = d / ".gitkeep"
-    if not gk.exists():
-        gk.touch()
-    out = []
-    for p in sorted(d.iterdir(), key=lambda x: x.name.lower()):
-        if p.is_file() and p.name not in SKIP:
-            out.append(p)
-    return out
+    return [p for p in sorted(d.iterdir(), key=lambda x: x.name.lower())
+            if p.is_file() and p.name not in SKIP and not p.name.startswith(".")]
 
 
 def qr_block(url, img_rel):
@@ -156,7 +154,6 @@ def qr_block(url, img_rel):
 
 
 def build():
-    # assets
     (ROOT / "assets").mkdir(exist_ok=True)
     (ROOT / "assets" / "style.css").write_text(CSS)
     if QR.exists():
@@ -166,18 +163,18 @@ def build():
     import qrcode
 
     rows = []
+    total_docs = 0
 
     def make_qr(url, name):
-        img = qrcode.make(url)
-        img.save(QR / f"{name}.png")
+        qrcode.make(url).save(QR / f"{name}.png")
 
     # ---- home ----
     cards = []
     for slug, label in BANNERS:
-        total = sum(len(scan(slug, c)) for c, _ in CATEGORIES)
+        n = sum(len(scan(slug, c)) for c, _ in CATEGORIES)
         cards.append(
             f'<a class="card" href="{slug}/index.html"><div class="t">{label}</div>'
-            f'<div class="s">{len(CATEGORIES)} categories &middot; {total} file(s)</div></a>'
+            f'<div class="s">{len(CATEGORIES)} categories &middot; {n} file(s)</div></a>'
         )
     make_qr(f"{SITE_URL}/", "home")
     rows.append(["BPUSFOODTEAM", "Home", f"{SITE_URL}/", "qr-codes/home.png"])
@@ -194,28 +191,28 @@ def build():
         bdir.mkdir(exist_ok=True)
         cards = []
         for cslug, clabel in CATEGORIES:
-            files = scan(bslug, cslug)
+            docs = scan(bslug, cslug)
+            total_docs += len(docs)
             cards.append(
                 f'<a class="card" href="{cslug}/index.html"><div class="i">{ICONS[cslug]}</div>'
-                f'<div class="t">{clabel}</div><div class="s">{len(files)} file(s)</div></a>'
+                f'<div class="t">{clabel}</div><div class="s">{len(docs)} file(s)</div></a>'
             )
 
-            # category page
             cdir = bdir / cslug
             cdir.mkdir(exist_ok=True)
-            if files:
+            if docs:
                 items = "".join(
-                    f'<li><a href="../../files/{bslug}/{cslug}/{f.name}">'
+                    f'<li><a href="{quote(f.name)}">'
                     f'<span class="name">{html.escape(f.name)}</span>'
                     f'<span class="meta">{f.suffix.lstrip(".").upper() or "FILE"} &middot; {human(f.stat().st_size)}</span>'
                     f"</a></li>"
-                    for f in files
+                    for f in docs
                 )
                 listing = f'<ul class="files">{items}</ul>'
             else:
                 listing = (
                     '<div class="empty">No files posted yet.<br>'
-                    f"Add files to <code>files/{bslug}/{cslug}/</code> and re-run <code>build.py</code>.</div>"
+                    f"Upload documents into the <code>{bslug}/{cslug}/</code> folder.</div>"
                 )
             url = f"{SITE_URL}/{bslug}/{cslug}/"
             qrname = f"{bslug}-{cslug}"
@@ -255,7 +252,8 @@ def build():
         w.writerows(rows)
 
     (ROOT / ".nojekyll").touch()
-    print(f"Built {len(rows)} pages/QR codes. Site URL base: {SITE_URL}")
+    print(f"Built {len(rows)} pages/QR codes. Listed {total_docs} document(s).")
+    print(f"Site URL base: {SITE_URL}")
 
 
 if __name__ == "__main__":
